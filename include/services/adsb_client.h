@@ -16,7 +16,7 @@ struct Aircraft {
   char hex[7];
 };
 
-constexpr size_t kMaxAircraft = 16;
+constexpr size_t kMaxAircraft = 64;
 
 size_t aircraftCount();
 const Aircraft* aircraftList();

@@ -55,8 +55,8 @@ LGFX_Sprite s_frame(&tft);
 bool s_frame_ready = false;
 
 struct TrailPoint {
-  int16_t dx_10km;
-  int16_t dy_10km;
+  int16_t dx;
+  int16_t dy;
 };
 
 struct AircraftTrail {
@@ -92,66 +92,40 @@ AircraftTrail* allocateTrail(const char* hex) {
   return nullptr;
 }
 
-float trailPointDistanceKm(const TrailPoint& a, const TrailPoint& b) {
-  const float dx = (static_cast<float>(a.dx_10km) -
-                    static_cast<float>(b.dx_10km)) * 0.1f;
-  const float dy = (static_cast<float>(a.dy_10km) -
-                    static_cast<float>(b.dy_10km)) * 0.1f;
-  return sqrtf(dx * dx + dy * dy);
-}
-
-void trimTrail(AircraftTrail& trail) {
-  if (trail.count < 2) {
-    return;
-  }
-
-  const float px_per_km =
-      static_cast<float>(radar::kGridOuterRadius) /
-      radar::rangeCurrent().outer_km;
-
-  const float max_km =
-      static_cast<float>(radar::kTrailMaxLengthPx) / px_per_km;
-
-  float length_km = 0.0f;
-
-  for (size_t i = trail.count - 1; i > 0; --i) {
-    length_km += trailPointDistanceKm(trail.points[i], trail.points[i - 1]);
-
-    if (length_km > max_km) {
-      // Keep the point where the maximum useful trail ends.
-      const size_t keep_from = i;
-
-      memmove(trail.points,
-              trail.points + keep_from,
-              (trail.count - keep_from) * sizeof(TrailPoint));
-
-      trail.count -= keep_from;
-      return;
-    }
-  }
-}
-
-void appendTrailPoint(AircraftTrail& trail, float dx_km, float dy_km) {
+void appendTrailPoint(AircraftTrail& trail, float dx_km, float dy_km)
+{
   TrailPoint point;
-  point.dx_10km = static_cast<int16_t>(lroundf(dx_km * 10.0f));
-  point.dy_10km = static_cast<int16_t>(lroundf(dy_km * 10.0f));
+  point.dx = static_cast<int16_t>(lroundf(dx_km * 1000.0f));
+  point.dy = static_cast<int16_t>(lroundf(dy_km * 1000.0f));
 
-  // Don't waste a sample if the aircraft hasn't moved enough to change
-  // its quantized position.
-  if (trail.count > 0 &&
-      trail.points[trail.count - 1].dx_10km == point.dx_10km &&
-      trail.points[trail.count - 1].dy_10km == point.dy_10km) {
-    return;
+  if (trail.count > 0) {
+    const int32_t dx =
+        static_cast<int32_t>(point.dx) -
+        static_cast<int32_t>(trail.points[trail.count - 1].dx);
+
+    const int32_t dy =
+        static_cast<int32_t>(point.dy) -
+        static_cast<int32_t>(trail.points[trail.count - 1].dy);
+
+    const int32_t distance_sq = dx * dx + dy * dy;
+    const int32_t min_distance_sq =
+        static_cast<int32_t>(radar::kTrailMinDistance) *
+        static_cast<int32_t>(radar::kTrailMinDistance);
+
+    if (distance_sq < min_distance_sq)
+      return;
   }
 
   if (trail.count >= radar::kTrailMaxPoints) {
-    memmove(trail.points, trail.points + 1,
-            (radar::kTrailMaxPoints - 1) * sizeof(TrailPoint));
+    memmove(
+        trail.points,
+        trail.points + 1,
+        (radar::kTrailMaxPoints - 1) * sizeof(TrailPoint));
+
     trail.count = radar::kTrailMaxPoints - 1;
   }
 
   trail.points[trail.count++] = point;
-  trimTrail(trail);
 }
 
 class DrawScope {
@@ -513,10 +487,11 @@ int measureTagBlockWidth(const services::adsb::Aircraft& plane) {
   return max_w;
 }
 
-
-void updateTrails() {
+void updateTrails()
+{
   const size_t n = services::adsb::aircraftCount();
-  const services::adsb::Aircraft* planes = services::adsb::aircraftList();
+  const services::adsb::Aircraft* planes =
+      services::adsb::aircraftList();
 
   bool seen[services::adsb::kMaxAircraft] = {};
 
@@ -525,85 +500,82 @@ void updateTrails() {
     float dy_km = 0.0f;
     float dist_km = 0.0f;
 
-    offsetKmFromCenter(planes[i].lat, planes[i].lon,
-                       &dx_km, &dy_km, &dist_km);
+    offsetKmFromCenter(
+        planes[i].lat,
+        planes[i].lon,
+        &dx_km,
+        &dy_km,
+        &dist_km);
 
-    // Rim dots are explicitly not part of the trail system.
-    if (!isInsideOuterRingKm(dist_km)) {
+    // Don't create trails for aircraft on the outer rim.
+    if (!isInsideOuterRingKm(dist_km))
       continue;
-    }
 
-    if (planes[i].hex[0] == '\0') {
+    if (planes[i].hex[0] == '\0')
       continue;
-    }
 
     AircraftTrail* trail = findTrail(planes[i].hex);
-    if (trail == nullptr) {
-      trail = allocateTrail(planes[i].hex);
-    }
 
-    if (trail == nullptr) {
+    if (trail == nullptr)
+      trail = allocateTrail(planes[i].hex);
+
+    if (trail == nullptr)
       continue;
-    }
 
     const size_t trail_index =
         static_cast<size_t>(trail - s_trails);
 
     seen[trail_index] = true;
+
     appendTrailPoint(*trail, dx_km, dy_km);
   }
 
-  // Anything not currently inside the radar is considered gone.
-  // This deliberately kills the trail rather than letting it linger
-  // while the aircraft is outside the visible area.
   for (size_t i = 0; i < services::adsb::kMaxAircraft; ++i) {
-    if (!seen[i]) {
+    if (!seen[i])
       clearTrail(s_trails[i]);
-    }
   }
 }
 
-void drawTrails() {
+void drawTrails()
+{
+  const int centerX = radar::kSize / 2;
+  const int centerY = radar::kSize / 2;
+
   const float px_per_km =
       static_cast<float>(radar::kGridOuterRadius) /
       radar::rangeCurrent().outer_km;
 
-  for (size_t t = 0; t < services::adsb::kMaxAircraft; ++t) {
-    const AircraftTrail& trail = s_trails[t];
+  for (size_t i = 0; i < services::adsb::kMaxAircraft; ++i) {
+    const AircraftTrail& trail = s_trails[i];
 
-    if (trail.count < 2) {
+    if (trail.count < 2)
       continue;
-    }
 
-    for (size_t i = 1; i < trail.count; ++i) {
-      const TrailPoint& a = trail.points[i - 1];
-      const TrailPoint& b = trail.points[i];
+    for (size_t j = 1; j < trail.count; ++j) {
+      const TrailPoint& a = trail.points[j - 1];
+      const TrailPoint& b = trail.points[j];
 
       const int x0 =
-          radar::kCenterX +
-          static_cast<int>(lroundf(a.dx_10km * 0.1f * px_per_km));
+          centerX +
+          lroundf(static_cast<float>(a.dx) * 0.001f * px_per_km);
 
       const int y0 =
-          radar::kCenterY -
-          static_cast<int>(lroundf(a.dy_10km * 0.1f * px_per_km));
+          centerY -
+          lroundf(static_cast<float>(a.dy) * 0.001f * px_per_km);
 
       const int x1 =
-          radar::kCenterX +
-          static_cast<int>(lroundf(b.dx_10km * 0.1f * px_per_km));
+          centerX +
+          lroundf(static_cast<float>(b.dx) * 0.001f * px_per_km);
 
       const int y1 =
-          radar::kCenterY -
-          static_cast<int>(lroundf(b.dy_10km * 0.1f * px_per_km));
+          centerY -
+          lroundf(static_cast<float>(b.dy) * 0.001f * px_per_km);
 
-      // Don't draw segments completely outside the display.
-      if ((x0 < 0 && x1 < 0) ||
-          (x0 >= radar::kSize && x1 >= radar::kSize) ||
-          (y0 < 0 && y1 < 0) ||
-          (y0 >= radar::kSize && y1 >= radar::kSize)) {
-        continue;
-      }
-
-      s_draw->drawLine(x0, y0, x1, y1, radar::kColorTrail);
+      s_draw->drawWideLine(
+          x0, y0,
+          x1, y1,
+          2.0f,
+          ui::radar::kColorTrail);
     }
   }
 }

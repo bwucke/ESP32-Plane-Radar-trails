@@ -51,11 +51,8 @@ constexpr uint8_t kTrailR = 8;
 constexpr uint8_t kTrailG = 32;
 constexpr uint8_t kTrailB = 80;
 
-/** Maximum accumulated trail length in screen pixels. */
-constexpr int kTrailMaxLengthPx = 80;
-
-/** Maximum number of samples: 200 × 3 s ≈ 10 minutes. */
-constexpr size_t kTrailMaxPoints = 200;
+constexpr size_t kTrailMaxPoints = 20;
+constexpr uint16_t kTrailMinDistance = 300;
 
 constexpr float kRunwayLineWidthPx = 2.0f;
 constexpr float kRunwayLineHalfWidth = kRunwayLineWidthPx * 0.5f;
