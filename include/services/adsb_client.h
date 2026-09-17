@@ -13,9 +13,10 @@ struct Aircraft {
   char callsign[9];
   char type[5];
   char alt[12];
+  char hex[7];
 };
 
-constexpr size_t kMaxAircraft = 64;
+constexpr size_t kMaxAircraft = 16;
 
 size_t aircraftCount();
 const Aircraft* aircraftList();

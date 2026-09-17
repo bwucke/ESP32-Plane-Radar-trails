@@ -46,6 +46,17 @@ constexpr float kAircraftTrackLengthScale = 1.5f / 5.0f;
 /** drawWideLine half-width for speed vectors (~2 px total). */
 constexpr float kAircraftTrackLineHalfWidth = 1.0f;
 
+/** Dark blue, deliberately subordinate to all aircraft/UI details. */
+constexpr uint8_t kTrailR = 8;
+constexpr uint8_t kTrailG = 32;
+constexpr uint8_t kTrailB = 80;
+
+/** Maximum accumulated trail length in screen pixels. */
+constexpr int kTrailMaxLengthPx = 80;
+
+/** Maximum number of samples: 200 × 3 s ≈ 10 minutes. */
+constexpr size_t kTrailMaxPoints = 200;
+
 constexpr float kRunwayLineWidthPx = 2.0f;
 constexpr float kRunwayLineHalfWidth = kRunwayLineWidthPx * 0.5f;
 constexpr int kRunwayLabelHeightPx = kCardinalLabelHeightPx;
@@ -99,5 +110,6 @@ extern uint16_t kColorTagType;
 extern uint16_t kColorTagAltitude;
 extern uint16_t kColorRunway;
 extern uint16_t kColorRunwayLabel;
+extern uint16_t kColorTrail;
 
 }  // namespace ui::radar

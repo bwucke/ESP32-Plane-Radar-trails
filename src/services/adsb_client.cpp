@@ -192,9 +192,9 @@ void fillTagFields(Aircraft* ac, const JsonObject& plane) {
   if (ac->callsign[0] == '\0') {
     copyJsonStringTrimmed(plane, "hex", ac->callsign, sizeof(ac->callsign));
   }
-
   copyJsonStringTrimmed(plane, "t", ac->type, sizeof(ac->type));
   formatAltitudeTag(plane, ac->alt, sizeof(ac->alt));
+  copyJsonStringTrimmed(plane, "hex", ac->hex, sizeof(ac->hex));
 }
 
 }  // namespace
