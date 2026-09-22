@@ -51,8 +51,8 @@ constexpr uint8_t kTrailR = 8;
 constexpr uint8_t kTrailG = 32;
 constexpr uint8_t kTrailB = 80;
 
-constexpr size_t kTrailMaxPoints = 20;
-constexpr uint16_t kTrailMinDistance = 300;
+constexpr size_t kTrailMaxPoints = 60;
+constexpr uint16_t kTrailMinDistance = 500;
 
 constexpr float kRunwayLineWidthPx = 2.0f;
 constexpr float kRunwayLineHalfWidth = kRunwayLineWidthPx * 0.5f;
