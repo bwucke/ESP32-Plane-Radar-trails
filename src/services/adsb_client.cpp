@@ -15,8 +15,10 @@ namespace {
 
 constexpr char kApiBase[] = "https://opendata.adsb.fi/api/v3/lat/";
 constexpr float kKmPerNm = 1.852f;
+
 constexpr int kConnectAttemptMs = 200;
 constexpr unsigned long kRequestTimeoutMs = 10000;
+constexpr int kMaxConsecutiveFailures = 10;
 
 Aircraft s_aircraft[kMaxAircraft];
 size_t s_aircraft_count = 0;
@@ -46,40 +48,56 @@ int performGetWithPoll(HTTPClient& http) {
   return HTTPC_ERROR_READ_TIMEOUT;
 }
 
-bool readResponseBodyWithPoll(HTTPClient& http, String& payload) {
+bool readResponseBodyWithPoll(HTTPClient& http, String& payload)
+{
   WiFiClient* stream = http.getStreamPtr();
-  if (stream == nullptr) {
+  if (stream == nullptr)
     return false;
-  }
 
   const int content_length = http.getSize();
-  if (content_length > 0) {
+
+  if (content_length > 0)
     payload.reserve(static_cast<unsigned>(content_length + 1));
-  }
 
   uint8_t buffer[512];
+
   const unsigned long deadline = millis() + kRequestTimeoutMs;
+
   while (millis() < deadline) {
     pollNetwork();
+
     const int available = stream->available();
+
     if (available > 0) {
       const int to_read =
-          available > static_cast<int>(sizeof(buffer)) ? static_cast<int>(sizeof(buffer))
-                                                       : available;
-      const int read_bytes = stream->readBytes(buffer, to_read);
+          available > static_cast<int>(sizeof(buffer))
+              ? static_cast<int>(sizeof(buffer))
+              : available;
+
+      const int read_bytes = stream->read(buffer, to_read);
+
       if (read_bytes > 0) {
-        payload.concat(reinterpret_cast<const char*>(buffer),
-                       static_cast<unsigned>(read_bytes));
+        payload.concat(
+            reinterpret_cast<const char*>(buffer),
+            static_cast<unsigned>(read_bytes));
       }
     }
+
     if (content_length > 0 &&
         static_cast<int>(payload.length()) >= content_length) {
       break;
     }
+
     if (!http.connected() && stream->available() <= 0) {
       break;
     }
+
     delay(1);
+  }
+
+  if (content_length > 0 &&
+      static_cast<int>(payload.length()) < content_length) {
+    return false;
   }
 
   return payload.length() > 0;
@@ -205,7 +223,10 @@ size_t aircraftCount() { return s_aircraft_count; }
 
 const Aircraft* aircraftList() { return s_aircraft; }
 
-bool fetchUpdate(double center_lat, double center_lon, float fetch_radius_km) {
+bool fetchUpdate(double center_lat, double center_lon, float fetch_radius_km)
+{
+  static int consecutive_failures = 0;
+
   const float dist_nm = kmToNauticalMiles(fetch_radius_km);
 
   String url = kApiBase;
@@ -219,50 +240,111 @@ bool fetchUpdate(double center_lat, double center_lon, float fetch_radius_km) {
   client.setInsecure();
 
   HTTPClient http;
-  if (!http.begin(client, url)) {
-    Serial.println("adsb: http.begin failed");
-    return false;
+
+if (!http.begin(client, url)) {
+  ++consecutive_failures;
+
+  Serial.printf(
+      "adsb: HTTP begin failed (%d/%d)\n",
+      consecutive_failures,
+      kMaxConsecutiveFailures);
+
+  if (consecutive_failures >= kMaxConsecutiveFailures) {
+    Serial.println("adsb: too many failures, restarting");
+    delay(100);
+    ESP.restart();
   }
+
+  return false;
+}
 
   http.useHTTP10(true);
   http.setTimeout(kRequestTimeoutMs);
+  http.setConnectTimeout(kConnectAttemptMs);
+
   const int code = performGetWithPoll(http);
+
   if (code != HTTP_CODE_OK) {
-    Serial.printf("adsb: HTTP %d\n", code);
+    Serial.printf(
+        "adsb: HTTP GET failed: %d (%d/%d)\n",
+        code,
+        ++consecutive_failures,
+        kMaxConsecutiveFailures);
+
     http.end();
+
+    if (consecutive_failures >= kMaxConsecutiveFailures) {
+      Serial.println("adsb: too many failures, restarting");
+      delay(100);
+      ESP.restart();
+    }
+
     return false;
   }
 
   String payload;
+
   if (!readResponseBodyWithPoll(http, payload)) {
-    Serial.println("adsb: empty response");
+    Serial.printf(
+        "adsb: response timeout/incomplete (%d/%d)\n",
+        ++consecutive_failures,
+        kMaxConsecutiveFailures);
+
     http.end();
+
+    if (consecutive_failures >= kMaxConsecutiveFailures) {
+      Serial.println("adsb: too many failures, restarting");
+      delay(100);
+      ESP.restart();
+    }
+
     return false;
   }
+
   http.end();
 
   JsonDocument doc;
-  const DeserializationError err = deserializeJson(doc, payload);
+
+  const DeserializationError err =
+      deserializeJson(doc, payload);
+
   if (err) {
-    Serial.printf("adsb: JSON parse error: %s\n", err.c_str());
+    Serial.printf(
+        "adsb: JSON parse failed: %s (%d/%d)\n",
+        err.c_str(),
+        ++consecutive_failures,
+        kMaxConsecutiveFailures);
+
+    if (consecutive_failures >= kMaxConsecutiveFailures) {
+      Serial.println("adsb: too many failures, restarting");
+      delay(100);
+      ESP.restart();
+    }
+
     return false;
   }
 
   JsonArray ac = doc["ac"].as<JsonArray>();
+
   if (ac.isNull()) {
     s_aircraft_count = 0;
+    consecutive_failures = 0;
     return true;
   }
 
   size_t n = 0;
+
   for (JsonObject plane : ac) {
-    if (n >= kMaxAircraft) {
+    if (n >= kMaxAircraft)
       break;
-    }
-    if (!plane["lat"].is<float>() || !plane["lon"].is<float>()) {
+
+    if (!plane["lat"].is<float>() ||
+        !plane["lon"].is<float>()) {
       continue;
     }
-    if (isOnGround(plane) && !config::kAdsbShowGroundAircraft) {
+
+    if (isOnGround(plane) &&
+        !config::kAdsbShowGroundAircraft) {
       continue;
     }
 
@@ -271,12 +353,21 @@ bool fetchUpdate(double center_lat, double center_lon, float fetch_radius_km) {
     s_aircraft[n].nose_deg = pickNoseHeading(plane);
     s_aircraft[n].track_deg = pickTrackHeading(plane);
     s_aircraft[n].gs_knots = pickGroundSpeed(plane);
+
     fillTagFields(&s_aircraft[n], plane);
+
     ++n;
   }
 
   s_aircraft_count = n;
-  Serial.printf("adsb: %u aircraft\n", static_cast<unsigned>(n));
+
+  // A complete and valid response resets the failure counter.
+  consecutive_failures = 0;
+
+  Serial.printf(
+      "adsb: %u aircraft\n",
+      static_cast<unsigned>(n));
+
   return true;
 }
 
